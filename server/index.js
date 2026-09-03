@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { JSONFilePreset } from "lowdb/node";
-import { defaultData } from "./seed.js";
+import { defaultData, DEFAULT_POSITION_DESCRIPTIONS } from "./seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -10,6 +10,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // so data survives redeploys. Falls back to a local file otherwise.
 const dbPath = process.env.DB_PATH || path.join(__dirname, "db.json");
 const db = await JSONFilePreset(dbPath, defaultData());
+
+// Backfill fields for databases created before this field existed.
+if (!db.data.positionDescriptions) {
+  db.data.positionDescriptions = DEFAULT_POSITION_DESCRIPTIONS;
+  await db.write();
+}
 
 const app = express();
 app.use(express.json({ limit: "3mb" }));
@@ -27,6 +33,12 @@ app.post("/api/employees", async (req, res) => {
 
 app.post("/api/taskConfig", async (req, res) => {
   db.data.taskConfig = req.body.taskConfig;
+  await db.write();
+  res.json({ ok: true });
+});
+
+app.post("/api/positionDescriptions", async (req, res) => {
+  db.data.positionDescriptions = req.body.positionDescriptions;
   await db.write();
   res.json({ ok: true });
 });

@@ -106,11 +106,18 @@ export function seedAccounts() {
   ];
 }
 
+export const DEFAULT_POSITION_DESCRIPTIONS = {
+  SC: { title: "SC Assistant", tag: "协助", body: "管车 + 管客户：跟进车辆进度、协调技师/零件、更新客户、追踪交车" },
+  HT: { title: "HT Assistant", tag: "协助", body: "管技术 + 管品质：协助诊断、技术执行、QC、技师安排与培训、减少返工" },
+  AOM: { title: "Assistant Operations Manager", tag: "", body: "管人 + 管流程：跨部门协调、KPI、SOP、解决营运问题、提升整体效率" },
+};
+
 export function defaultData() {
   return {
     employees: seedEmployees(),
     taskConfig: { crossLine: DEFAULT_CROSS_LINE_CONFIG, missions: DEFAULT_MISSIONS_CONFIG },
     accounts: seedAccounts(),
+    positionDescriptions: DEFAULT_POSITION_DESCRIPTIONS,
     log: [],
   };
 }
