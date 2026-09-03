@@ -422,9 +422,9 @@ export default function App() {
     persist(next, actionLabel);
   };
 
-  const addEmployee = () => {
-    const name = prompt("新员工姓名：");
-    if (!name) return;
+  const addEmployee = (name) => {
+    if (!name || !name.trim()) return;
+    name = name.trim();
     const seed = seedEmployees()[0];
     const crossLine = {};
     crossLineConfig.forEach((c) => { crossLine[c.key] = { status: "NOT_STARTED", certifiedAt: null, score: null, evidence: "", comment: "" }; });
@@ -644,12 +644,26 @@ function TopBar({ tab }) {
 /* ---------------- dashboard ---------------- */
 
 function Dashboard({ employees, onOpen, onAdd, role, log, crossLineConfig, missionsConfig }) {
+  const [addingEmp, setAddingEmp] = useState(false);
+  const [newEmpName, setNewEmpName] = useState("");
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{employees.length} 名员工在晋升体系中</div>
-        {(role === "FOUNDER" || role === "MANAGER") && <Btn tone="amber" small onClick={onAdd}>+ 新增员工（复制模板）</Btn>}
+        {(role === "FOUNDER" || role === "MANAGER") && !addingEmp && (
+          <Btn tone="amber" small onClick={() => setAddingEmp(true)}>+ 新增员工（复制模板）</Btn>
+        )}
       </div>
+
+      {addingEmp && (
+        <Panel>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input autoFocus style={{ ...inputStyle, flex: 1, minWidth: 160 }} placeholder="新员工姓名" value={newEmpName} onChange={(e) => setNewEmpName(e.target.value)} />
+            <Btn small tone="amber" disabled={!newEmpName.trim()} onClick={() => { onAdd(newEmpName); setNewEmpName(""); setAddingEmp(false); }}>创建</Btn>
+            <Btn small onClick={() => { setAddingEmp(false); setNewEmpName(""); }}>取消</Btn>
+          </div>
+        </Panel>
+      )}
 
       {employees.map((emp) => {
         const pct = progressPercent(emp, crossLineConfig, missionsConfig);
@@ -739,6 +753,29 @@ function StepperPipeline({ emp, crossLineConfig, missionsConfig }) {
   );
 }
 
+/* Inline confirm — avoids window.confirm/prompt which can be silently blocked inside
+   sandboxed preview iframes. Two-tap pattern: click → reveals confirm row → confirm/cancel. */
+function ConfirmInline({ label, tone = "red", small = true, requireReason, onConfirm }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  if (!open) return <Btn small={small} tone={tone} onClick={() => setOpen(true)}>{label}</Btn>;
+  return (
+    <div style={{ border: `1px dashed var(--${tone})`, padding: 10, marginTop: 6, background: "var(--panel)" }}>
+      {requireReason && (
+        <textarea
+          style={{ ...inputStyle, minHeight: 54, resize: "vertical", marginBottom: 8 }}
+          placeholder="填写原因（会记录在历史中）…"
+          value={reason} onChange={(e) => setReason(e.target.value)}
+        />
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Btn small tone={tone} onClick={() => { onConfirm(reason); setOpen(false); setReason(""); }}>确认{label}</Btn>
+        <Btn small onClick={() => { setOpen(false); setReason(""); }}>取消</Btn>
+      </div>
+    </div>
+  );
+}
+
 function CanAct(role, certifierName, certifierField) {
   if (role === "FOUNDER" || role === "MANAGER") return true;
   if (role === "CERTIFIER") {
@@ -822,7 +859,7 @@ function Field({ label, children }) {
   );
 }
 
-function CertRow({ item, config, canAct, canSubmit, canEditConfig, isMission, onCertify, onSubmitEvidence, onSaveConfig }) {
+function CertRow({ item, config, canAct, canSubmit, canEditConfig, isMission, onCertify, onSubmitEvidence, onSaveConfig, onRevoke }) {
   const [score, setScore] = useState(item.score || 80);
   const [comment, setComment] = useState("");
   const [evidence, setEvidence] = useState("");
@@ -867,20 +904,26 @@ function CertRow({ item, config, canAct, canSubmit, canEditConfig, isMission, on
           {item.evidence && <div style={{ fontSize: 12, color: "var(--text)", margin: "8px 0" }}>已提交证据：{item.evidence}</div>}
           {item.comment && <div style={{ fontSize: 12, color: "var(--amber)", margin: "8px 0" }}>认证备注：{item.comment}</div>}
 
-          {canSubmit && (item.status === "NOT_STARTED" || item.status === "IN_PROGRESS") && (
+          {canSubmit && (item.status === "NOT_STARTED" || item.status === "IN_PROGRESS" || item.status === "LOCKED") && (
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
               <input style={{ ...inputStyle, flex: 1, minWidth: 160 }} placeholder="填写证据说明后提交认证…" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
               <Btn small tone="amber" disabled={!evidence.trim()} onClick={() => { onSubmitEvidence(evidence); setEvidence(""); }}>提交待认证</Btn>
             </div>
           )}
 
-          {canAct && (item.status === "PENDING_CERT" || item.status === "IN_PROGRESS" || item.status === "NOT_STARTED" || item.status === "RETRY") && (
+          {canAct && (item.status === "PENDING_CERT" || item.status === "IN_PROGRESS" || item.status === "NOT_STARTED" || item.status === "RETRY" || item.status === "LOCKED") && (
             <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <input type="number" min="0" max="100" style={{ ...inputStyle, width: 70 }} value={score} onChange={(e) => setScore(Number(e.target.value))} />
               <input style={{ ...inputStyle, flex: 1, minWidth: 140 }} placeholder="认证备注…" value={comment} onChange={(e) => setComment(e.target.value)} />
               <Btn small tone="green" onClick={() => onCertify("PASS", score, comment)}>PASS</Btn>
               <Btn small tone="red" onClick={() => onCertify("FAIL", score, comment)}>FAIL</Btn>
               <Btn small onClick={() => onCertify("RETRY", score, comment)}>需更多证据</Btn>
+            </div>
+          )}
+
+          {canAct && (item.status === "PASS" || item.status === "FAIL") && onRevoke && (
+            <div style={{ marginTop: 10 }}>
+              <ConfirmInline label="撤销认证结果，重新评分" onConfirm={() => onRevoke()} />
             </div>
           )}
         </div>
@@ -940,6 +983,7 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
               onSaveConfig={(patch) => updateCrossLineConfigItem(c.key, patch)}
               onSubmitEvidence={(ev) => setCross(c.key, { status: "PENDING_CERT", evidence: ev })}
               onCertify={(status, score, comment) => setCross(c.key, { status, score, comment, certifiedAt: new Date().toISOString().slice(0, 10) })}
+              onRevoke={() => setCross(c.key, { status: "PENDING_CERT", certifiedAt: null })}
             />
           );
         })}
@@ -994,6 +1038,8 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
         canManagerAct={role === "MANAGER" || role === "FOUNDER"} canFounderAct={role === "FOUNDER"}
         onManagerPass={() => updateEmployee(emp.id, (e) => { e.gate1.managerPass = true; return e; }, `${emp.name} · Gate1 Manager PASS`)}
         onFounderReview={() => updateEmployee(emp.id, (e) => { e.gate1.founderReview = true; return e; }, `${emp.name} · Gate1 Founder Review 完成`)}
+        onManagerUndo={() => updateEmployee(emp.id, (e) => { e.gate1.managerPass = false; return e; }, `${emp.name} · 撤销 Gate1 Manager PASS`)}
+        onFounderUndo={() => updateEmployee(emp.id, (e) => { e.gate1.founderReview = false; return e; }, `${emp.name} · 撤销 Gate1 Founder Review`)}
       />
 
       {gate1Eligible && !emp.level2Path && canManage && (
@@ -1024,6 +1070,7 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
                   onSaveConfig={(patch) => updateMissionsConfigItem(m.key, patch)}
                   onSubmitEvidence={(ev) => setMission(m.key, { status: "PENDING_CERT", evidence: ev })}
                   onCertify={(status, score, comment) => setMission(m.key, { status, score, comment, certifiedAt: new Date().toISOString().slice(0, 10) })}
+                  onRevoke={() => setMission(m.key, { status: "PENDING_CERT", certifiedAt: null })}
                 />
                 {countMission !== undefined && canManage && item.status !== "PASS" && (
                   <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: -4, marginBottom: 8, marginLeft: 4, flexWrap: "wrap" }}>
@@ -1043,6 +1090,8 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
           canManagerAct={role === "MANAGER" || role === "FOUNDER"} canFounderAct={role === "FOUNDER"}
           onManagerPass={() => updateEmployee(emp.id, (e) => { e.gate2.managerPass = true; return e; }, `${emp.name} · Gate2 Manager PASS`)}
           onFounderReview={() => updateEmployee(emp.id, (e) => { e.gate2.founderReview = true; return e; }, `${emp.name} · Gate2 Founder Review 完成`)}
+          onManagerUndo={() => updateEmployee(emp.id, (e) => { e.gate2.managerPass = false; return e; }, `${emp.name} · 撤销 Gate2 Manager PASS`)}
+          onFounderUndo={() => updateEmployee(emp.id, (e) => { e.gate2.founderReview = false; return e; }, `${emp.name} · 撤销 Gate2 Founder Review`)}
         />
       )}
 
@@ -1057,12 +1106,45 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
         <Panel accent="var(--green)"><div style={{ fontSize: 14, color: "var(--green)", fontWeight: 700 }}>✓ 已晋升为 Assistant Operations Manager</div></Panel>
       )}
 
+      {role === "FOUNDER" && (emp.finalStatus === "APPROVED" || emp.level >= 2) && (
+        <Panel title="降级 / 撤销晋升" sub="如果几个月后表现不理想，Founder 可以在这里撤销晋升 — 会记录降职原因" accent="var(--red)">
+          {emp.finalStatus === "APPROVED" && (
+            <div style={{ marginBottom: 10 }}>
+              <ConfirmInline label="撤销 Assistant Operations Manager 批准" requireReason onConfirm={(reason) => {
+                updateEmployee(emp.id, (e) => {
+                  e.finalStatus = null;
+                  e.position = e.level2Path === "SC" ? "SC Assistant" : "HT Assistant";
+                  e.promotionReviews.push({ date: new Date().toISOString().slice(0, 10), recommendation: reason || "（未填写原因）", decision: "DEMOTED", by: "FOUNDER" });
+                  return e;
+                }, `${emp.name} · Founder 撤销 Assistant Operations Manager 批准`);
+              }} />
+            </div>
+          )}
+          {emp.level >= 2 && (
+            <div>
+              <ConfirmInline label="降级回 Level 1（保留任务与认证历史）" requireReason onConfirm={(reason) => {
+                updateEmployee(emp.id, (e) => {
+                  e.level = 1;
+                  e.level2Path = null;
+                  e.position = "Cross-Line Operator";
+                  e.finalStatus = null;
+                  e.gate2.managerPass = false;
+                  e.gate2.founderReview = false;
+                  e.promotionReviews.push({ date: new Date().toISOString().slice(0, 10), recommendation: reason || "（未填写原因）", decision: "DEMOTED", by: "FOUNDER" });
+                  return e;
+                }, `${emp.name} · Founder 降级回 Level 1`);
+              }} />
+            </div>
+          )}
+        </Panel>
+      )}
+
       <RedFlagPanel emp={emp} canManage={canManage} updateEmployee={updateEmployee} />
     </div>
   );
 }
 
-function GatePanel({ title, requirements, eligible, managerPass, founderReview, canManagerAct, canFounderAct, onManagerPass, onFounderReview }) {
+function GatePanel({ title, requirements, eligible, managerPass, founderReview, canManagerAct, canFounderAct, onManagerPass, onFounderReview, onManagerUndo, onFounderUndo }) {
   return (
     <Panel title={title} sub={eligible ? "全部条件已满足 — 代表获得晋升评估资格，不代表自动晋升" : "晋升评估资格进度"} accent={eligible ? "var(--green)" : "var(--amber)"}>
       {requirements.map((r, i) => (
@@ -1073,7 +1155,9 @@ function GatePanel({ title, requirements, eligible, managerPass, founderReview, 
       ))}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
         {canManagerAct && !managerPass && <Btn small tone="amber" onClick={onManagerPass}>标记 Manager PASS</Btn>}
+        {canManagerAct && managerPass && onManagerUndo && <Btn small onClick={onManagerUndo}>↺ 撤销 Manager PASS</Btn>}
         {canFounderAct && !founderReview && <Btn small tone="amber" onClick={onFounderReview}>标记 Founder Review 完成</Btn>}
+        {canFounderAct && founderReview && onFounderUndo && <Btn small onClick={onFounderUndo}>↺ 撤销 Founder Review</Btn>}
       </div>
     </Panel>
   );
@@ -1237,6 +1321,7 @@ function ApprovalCenter({ employees, role, updateEmployee, onOpen, crossLineConf
                   <option value="REJECTED">REJECTED</option>
                   <option value="EXTEND">EXTEND DEVELOPMENT</option>
                   <option value="RETRY">RETRY</option>
+                  <option value="DEMOTED">DEMOTED</option>
                 </select>
                 <Btn small tone="amber" disabled={!draft.recommendation} onClick={() => {
                   updateEmployee(emp.id, (e) => {
