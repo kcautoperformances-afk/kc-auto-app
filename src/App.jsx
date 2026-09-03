@@ -80,7 +80,7 @@ const ROLE_LABELS = { FOUNDER: "Founder", MANAGER: "Manager", CERTIFIER: "部门
 function seedAccounts() {
   return [
     { id: "acc-boss", username: "boss", password: "boss2026", displayName: "Boss", role: "FOUNDER", certifierScope: null, employeeId: null },
-    { id: "acc-wy", username: "wy", password: "wy2026", displayName: "WY", role: "MANAGER", certifierScope: null, employeeId: null },
+    { id: "acc-wy", username: "wy", password: "wy2026", displayName: "WY", role: "MANAGER", certifierScope: "WY, Manager", employeeId: null },
     { id: "acc-kim", username: "kim", password: "kim2026", displayName: "Kim", role: "CERTIFIER", certifierScope: "Kim", employeeId: null },
     { id: "acc-qing", username: "qing", password: "qing2026", displayName: "Qing", role: "CERTIFIER", certifierScope: "Qing", employeeId: null },
     { id: "acc-yoyo", username: "yoyo", password: "yoyo2026", displayName: "Yoyo", role: "CERTIFIER", certifierScope: "Yoyo", employeeId: null },
@@ -497,6 +497,7 @@ export default function App() {
               crossLineConfig={crossLineConfig} missionsConfig={missionsConfig}
               updateCrossLineConfigItem={updateCrossLineConfigItem}
               updateMissionsConfigItem={updateMissionsConfigItem}
+              accounts={accounts}
             />
           )}
           {tab === "certify" && (
@@ -740,8 +741,32 @@ function StepperPipeline({ emp, crossLineConfig, missionsConfig }) {
 
 function CanAct(role, certifierName, certifierField) {
   if (role === "FOUNDER" || role === "MANAGER") return true;
-  if (role === "CERTIFIER") return certifierField.includes(certifierName);
+  if (role === "CERTIFIER") {
+    if (!certifierName) return false;
+    const tokens = certifierName.split(",").map((s) => s.trim()).filter(Boolean);
+    return tokens.some((t) => certifierField.includes(t));
+  }
   return false;
+}
+
+/* Resolves "认证人" display text so it always reflects the account's CURRENT display name,
+   instead of a name hardcoded into the task config. Boss renames an account in 账号管理 →
+   every task/mission card referencing that person's certifierScope updates automatically. */
+function resolveCertifierLabel(text, accounts) {
+  if (!text || !accounts || accounts.length === 0) return text;
+  const pairs = [];
+  accounts.forEach((a) => {
+    if (!a.certifierScope) return;
+    a.certifierScope.split(",").map((s) => s.trim()).filter(Boolean).forEach((kw) => {
+      pairs.push({ kw, name: a.displayName });
+    });
+  });
+  pairs.sort((a, b) => b.kw.length - a.kw.length);
+  let result = text;
+  pairs.forEach(({ kw, name }) => {
+    if (kw && result.includes(kw)) result = result.split(kw).join(name);
+  });
+  return result;
 }
 
 /* editable config form, used inside CertRow when an admin clicks "编辑任务内容" */
@@ -864,7 +889,7 @@ function CertRow({ item, config, canAct, canSubmit, canEditConfig, isMission, on
   );
 }
 
-function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, updateEmployee, crossLineConfig, missionsConfig, updateCrossLineConfigItem, updateMissionsConfigItem }) {
+function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, updateEmployee, crossLineConfig, missionsConfig, updateCrossLineConfigItem, updateMissionsConfigItem, accounts }) {
   const gate1 = gate1Requirements(emp, crossLineConfig);
   const gate1Eligible = gate1.every((r) => r.done);
   const gate2 = gate2Requirements(emp, missionsConfig);
@@ -905,9 +930,10 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
       <Panel title="LEVEL 1 · Cross-Line Operator" sub="目标：全面理解 KC Auto 业务，而不是只会单一岗位。点开每一项可查看/编辑任务内容" accent="var(--amber)">
         {crossLineConfig.map((c) => {
           const item = emp.crossLine[c.key] || { status: "NOT_STARTED" };
+          const resolvedConfig = { ...c, certifier: resolveCertifierLabel(c.certifier, accounts) };
           return (
             <CertRow
-              key={c.key} item={item} config={c}
+              key={c.key} item={item} config={resolvedConfig}
               canAct={CanAct(role, certifierName, c.certifier)}
               canSubmit={role === "EMPLOYEE"}
               canEditConfig={canManage}
@@ -919,7 +945,7 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
         })}
 
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>销售追踪 · Sales (目标 {fmtRM(crossLineConfig.find((c) => c.key === "sales")?.target || 40000)}/月)</div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>销售追踪 · Sales (目标 {fmtRM(crossLineConfig.find((c) => c.key === "sales")?.target || 40000)}/月) <span style={{ fontWeight: 400, color: "var(--muted)" }}>· 每月只能提交一次，提交后不可更改</span></div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 90, marginBottom: 8, overflowX: "auto" }}>
             {emp.salesRecords.map((r, i) => {
               const h = Math.min(100, (r.actual / r.target) * 100);
@@ -939,11 +965,26 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
               <input placeholder="YYYY-MM" style={{ ...inputStyle, width: 90 }} value={salesMonth} onChange={(e) => setSalesMonth(e.target.value)} />
               <input type="number" placeholder="实际业绩" style={{ ...inputStyle, width: 110 }} value={salesActual || ""} onChange={(e) => setSalesActual(Number(e.target.value))} />
               <Btn small tone="amber" disabled={!salesMonth || !salesActual} onClick={() => {
+                if (emp.salesRecords.some((r) => r.month === salesMonth)) {
+                  alert(`${salesMonth} 已经提交过销售记录，提交后不可更改，请确认月份是否正确。`);
+                  return;
+                }
                 updateEmployee(emp.id, (e) => { e.salesRecords.push({ month: salesMonth, target: salesTarget, actual: salesActual }); return e; }, `${emp.name} · 添加销售记录 ${salesMonth}`);
                 setSalesMonth(""); setSalesActual(0);
               }}>+ 添加月度记录</Btn>
             </div>
           )}
+        </div>
+      </Panel>
+
+      {/* PROBLEM SOLVING (Level 1 / Gate 1 requirement) */}
+      <Panel title="Problem Solving 项目 · Level 1" sub="Gate 1 要求完成至少 3 个跨部门 Problem Solving 项目">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13 }}>已完成 <b style={{ color: "var(--amber)" }}>{emp.problemSolvingCount || 0}</b> / 3</span>
+          {canManage && (emp.problemSolvingCount || 0) < 3 && (
+            <Btn small onClick={() => updateEmployee(emp.id, (e) => { e.problemSolvingCount = (e.problemSolvingCount || 0) + 1; return e; }, `${emp.name} · Problem Solving +1（Level 1）`)}>+1 完成项</Btn>
+          )}
+          {(emp.problemSolvingCount || 0) >= 3 && <Badge status="PASS" />}
         </div>
       </Panel>
 
@@ -970,11 +1011,12 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
           {missionsConfig.map((m) => {
             const item = emp.missions[m.key] || { status: "LOCKED", count: 0 };
             const countMission = m.targetCount;
+            const resolvedCertifier = resolveCertifierLabel(m.certifier, accounts);
             return (
               <div key={m.key}>
                 <CertRow
                   item={item}
-                  config={{ label: m.label, certifier: m.certifier, tasks: m.desc ? [m.desc] : null, hasTarget: !!m.target, target: m.target, targetCount: m.targetCount }}
+                  config={{ label: m.label, certifier: resolvedCertifier, tasks: m.desc ? [m.desc] : null, hasTarget: !!m.target, target: m.target, targetCount: m.targetCount }}
                   canAct={CanAct(role, certifierName, m.certifier)}
                   canSubmit={role === "EMPLOYEE"}
                   canEditConfig={canManage}
