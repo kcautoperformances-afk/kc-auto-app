@@ -89,6 +89,12 @@ function seedAccounts() {
   ];
 }
 
+const DEFAULT_POSITION_DESCRIPTIONS = {
+  SC: { title: "SC Assistant", tag: "协助", body: "管车 + 管客户：跟进车辆进度、协调技师/零件、更新客户、追踪交车" },
+  HT: { title: "HT Assistant", tag: "协助", body: "管技术 + 管品质：协助诊断、技术执行、QC、技师安排与培训、减少返工" },
+  AOM: { title: "Assistant Operations Manager", tag: "", body: "管人 + 管流程：跨部门协调、KPI、SOP、解决营运问题、提升整体效率" },
+};
+
 const PATH_TEMPLATES = [
   { key: "OPERATIONS", label: "Operations Track（Cross-Line → Assistant Operations Manager）", active: true },
   { key: "TECHNICIAN", label: "Technician → Senior Technician → Team Leader → HT Assistant → Head Technician", active: false },
@@ -285,6 +291,7 @@ export default function App() {
   const [employees, setEmployees] = useState([]);
   const [crossLineConfig, setCrossLineConfig] = useState(DEFAULT_CROSS_LINE_CONFIG);
   const [missionsConfig, setMissionsConfig] = useState(DEFAULT_MISSIONS_CONFIG);
+  const [positionDescriptions, setPositionDescriptions] = useState(DEFAULT_POSITION_DESCRIPTIONS);
   const [log, setLog] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
@@ -306,6 +313,7 @@ export default function App() {
           if (data.taskConfig.crossLine) setCrossLineConfig(data.taskConfig.crossLine);
           if (data.taskConfig.missions) setMissionsConfig(data.taskConfig.missions);
         }
+        if (data.positionDescriptions) setPositionDescriptions(data.positionDescriptions);
         setLog(data.log || []);
         const loadedAccounts = data.accounts || [];
         setAccounts(loadedAccounts);
@@ -417,6 +425,20 @@ export default function App() {
     persistConfig(crossLineConfig, next, `编辑 Mission 内容：${patch.label || key}`);
   };
 
+  const updatePositionDescription = (key, patch) => {
+    const next = { ...positionDescriptions, [key]: { ...positionDescriptions[key], ...patch } };
+    setPositionDescriptions(next);
+    const nextLog = [{ t: new Date().toISOString(), who: role, action: `编辑职位说明：${next[key].title}` }, ...log].slice(0, 60);
+    setLog(nextLog);
+    (async () => {
+      try {
+        await postJSON("/api/positionDescriptions", { positionDescriptions: next });
+        await postJSON("/api/log", { log: nextLog });
+        setSaveErr(false);
+      } catch { setSaveErr(true); }
+    })();
+  };
+
   const updateEmployee = (id, updater, actionLabel) => {
     const next = employees.map((e) => (e.id === id ? updater(structuredClone(e)) : e));
     persist(next, actionLabel);
@@ -498,6 +520,8 @@ export default function App() {
               updateCrossLineConfigItem={updateCrossLineConfigItem}
               updateMissionsConfigItem={updateMissionsConfigItem}
               accounts={accounts}
+              positionDescriptions={positionDescriptions}
+              updatePositionDescription={updatePositionDescription}
             />
           )}
           {tab === "certify" && (
@@ -932,7 +956,45 @@ function CertRow({ item, config, canAct, canSubmit, canEditConfig, isMission, on
   );
 }
 
-function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, updateEmployee, crossLineConfig, missionsConfig, updateCrossLineConfigItem, updateMissionsConfigItem, accounts }) {
+function PositionDescCard({ emp, positionDescriptions, canManage, onSave }) {
+  const key = emp.finalStatus === "APPROVED" ? "AOM" : emp.level2Path === "SC" ? "SC" : emp.level2Path === "HT" ? "HT" : null;
+  const desc = key ? positionDescriptions[key] : null;
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(desc ? desc.title : "");
+  const [tag, setTag] = useState(desc ? desc.tag : "");
+  const [body, setBody] = useState(desc ? desc.body : "");
+  if (!key || !desc) return null;
+
+  return (
+    <Panel accent="var(--amber)">
+      {!editing ? (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 20, fontWeight: 600 }}>{desc.title}{desc.tag ? <span style={{ fontSize: 12.5, color: "var(--amber)", marginLeft: 8, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>{desc.tag}</span> : null}</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginTop: 8, lineHeight: 1.6 }}>{desc.body}</div>
+            </div>
+            {canManage && <Btn small onClick={() => { setTitle(desc.title); setTag(desc.tag); setBody(desc.body); setEditing(true); }}>✎ 编辑</Btn>}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Field label="职位名称"><input style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+          <Field label={`标签（可留空，例如"协助"）`}><input style={inputStyle} value={tag} onChange={(e) => setTag(e.target.value)} /></Field>
+          <Field label="核心职责说明">
+            <textarea style={{ ...inputStyle, minHeight: 70, resize: "vertical" }} value={body} onChange={(e) => setBody(e.target.value)} />
+          </Field>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn small tone="amber" onClick={() => { onSave(key, { title, tag, body }); setEditing(false); }}>保存</Btn>
+            <Btn small onClick={() => setEditing(false)}>取消</Btn>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, updateEmployee, crossLineConfig, missionsConfig, updateCrossLineConfigItem, updateMissionsConfigItem, accounts, positionDescriptions, updatePositionDescription }) {
   const gate1 = gate1Requirements(emp, crossLineConfig);
   const gate1Eligible = gate1.every((r) => r.done);
   const gate2 = gate2Requirements(emp, missionsConfig);
@@ -945,6 +1007,7 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
   const [salesTarget] = useState(40000);
   const [salesActual, setSalesActual] = useState(0);
   const [salesMonth, setSalesMonth] = useState("");
+  const [psNote, setPsNote] = useState("");
 
   return (
     <div>
@@ -958,8 +1021,7 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 20 }}>{emp.name}</div>
-            <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{emp.position} · {emp.department} · 重新加入 {emp.rejoinDate}</div>
-            {emp.note && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, maxWidth: 480, lineHeight: 1.5 }}>{emp.note}</div>}
+            <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{emp.position} · {emp.department}</div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 26, color: "var(--amber)" }}>{progressPercent(emp, crossLineConfig, missionsConfig)}%</div>
@@ -968,6 +1030,8 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
         </div>
         <StepperPipeline emp={emp} crossLineConfig={crossLineConfig} missionsConfig={missionsConfig} />
       </Panel>
+
+      <PositionDescCard emp={emp} positionDescriptions={positionDescriptions} canManage={canManage} onSave={updatePositionDescription} />
 
       {/* LEVEL 1 */}
       <Panel title="LEVEL 1 · Cross-Line Operator" sub="目标：全面理解 KC Auto 业务，而不是只会单一岗位。点开每一项可查看/编辑任务内容" accent="var(--amber)">
@@ -1022,14 +1086,40 @@ function EmployeeProfile({ emp, employees, setSelectedId, role, certifierName, u
       </Panel>
 
       {/* PROBLEM SOLVING (Level 1 / Gate 1 requirement) */}
-      <Panel title="Problem Solving 项目 · Level 1" sub="Gate 1 要求完成至少 3 个跨部门 Problem Solving 项目">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <Panel title="Problem Solving 项目 · Level 1" sub="Gate 1 要求完成至少 3 个跨部门 Problem Solving 项目：发现 → 分析原因 → 提出方案 → 执行 → 验证 → 防止重复">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
           <span style={{ fontSize: 13 }}>已完成 <b style={{ color: "var(--amber)" }}>{emp.problemSolvingCount || 0}</b> / 3</span>
-          {canManage && (emp.problemSolvingCount || 0) < 3 && (
-            <Btn small onClick={() => updateEmployee(emp.id, (e) => { e.problemSolvingCount = (e.problemSolvingCount || 0) + 1; return e; }, `${emp.name} · Problem Solving +1（Level 1）`)}>+1 完成项</Btn>
-          )}
           {(emp.problemSolvingCount || 0) >= 3 && <Badge status="PASS" />}
         </div>
+
+        {(emp.problemSolvingRecords || []).length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            {emp.problemSolvingRecords.map((r, i) => (
+              <div key={i} style={{ border: "1px solid var(--line)", background: "var(--track)", padding: "8px 10px", marginBottom: 6, fontSize: 12.5 }}>
+                <div style={{ color: "var(--muted)", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, marginBottom: 3 }}>#{i + 1} · {r.date}</div>
+                <div style={{ color: "var(--text)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{r.note}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {canManage && (emp.problemSolvingCount || 0) < 3 && (
+          <div>
+            <textarea
+              style={{ ...inputStyle, minHeight: 60, resize: "vertical", marginBottom: 8 }}
+              placeholder="写下这个项目：发现了什么问题 → 怎么分析 → 方案 → 执行结果…"
+              value={psNote} onChange={(e) => setPsNote(e.target.value)}
+            />
+            <Btn small tone="amber" onClick={() => {
+              updateEmployee(emp.id, (e) => {
+                e.problemSolvingCount = (e.problemSolvingCount || 0) + 1;
+                e.problemSolvingRecords = [...(e.problemSolvingRecords || []), { date: new Date().toISOString().slice(0, 10), note: psNote.trim() || "（未填写说明）" }];
+                return e;
+              }, `${emp.name} · Problem Solving +1（Level 1）`);
+              setPsNote("");
+            }}>+1 完成项并记录</Btn>
+          </div>
+        )}
       </Panel>
 
       {/* GATE 1 */}
